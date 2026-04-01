@@ -1,0 +1,130 @@
+version: '3.9'
+
+networks:
+  phoenix-mesh-net:
+    driver: bridge
+
+# ── Shared Phoenix Sidecar Environment ────────────────────────────────────────
+x-sidecar-env: &sidecar-env
+  CONTROLLER_URL: http://phoenix-controller:8080
+  PROBE_INTERVAL_MS: ${PROBE_INTERVAL_MS:-5000}
+  FAIL_THRESHOLD: ${FAIL_THRESHOLD:-3}
+  PROBE_TIMEOUT_MS: ${PROBE_TIMEOUT_MS:-2000}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+services:
+
+  # ── Observability Stack ─────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: phoenix-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks: [phoenix-mesh-net]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # ── Phoenix Mesh Control Plane ──────────────────────────────────────────────
+  phoenix-controller:
+    build:
+      context: ./controller
+      dockerfile: Dockerfile
+    container_name: phoenix-controller
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      # AI Analysis Key (Set in your .env file)
+      AI_ANALYSIS_API_KEY: ${AI_ANALYSIS_API_KEY:?AI_ANALYSIS_API_KEY is required}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      PROMETHEUS_URL: http://phoenix-prometheus:9090
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: development
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    networks: [phoenix-mesh-net]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 15s
+      start_period: 10s
+    restart: unless-stopped
+
+  # ── Phoenix Service: Order ──────────────────────────────────────────────────
+  order-service:
+    build:
+      context: ./services/order-service
+    container_name: phoenix-order-svc
+    expose:
+      - "3000"
+    environment:
+      SERVICE_NAME: order-service
+    networks: [phoenix-mesh-net]
+    restart: unless-stopped
+
+  order-sidecar:
+    build:
+      context: ./sidecar
+    container_name: phoenix-order-sidecar
+    ports:
+      - "9101:9090"
+    environment:
+      <<: *sidecar-env
+      SERVICE_NAME: order-service
+      SERVICE_URL: http://order-service:3000
+      POD_NAME: order-pod-local
+    depends_on:
+      order-service:
+        condition: service_started
+      phoenix-controller:
+        condition: service_healthy
+    networks: [phoenix-mesh-net]
+
+  # ── Phoenix Service: Payment ────────────────────────────────────────────────
+  payment-service:
+    build:
+      context: ./services/payment-service
+    container_name: phoenix-payment-svc
+    expose:
+      - "3000"
+    networks: [phoenix-mesh-net]
+    restart: unless-stopped
+
+  payment-sidecar:
+    build:
+      context: ./sidecar
+    container_name: phoenix-payment-sidecar
+    ports:
+      - "9102:9090"
+    environment:
+      <<: *sidecar-env
+      SERVICE_NAME: payment-service
+      SERVICE_URL: http://payment-service:3000
+      POD_NAME: payment-pod-local
+    depends_on:
+      payment-service:
+        condition: service_started
+      phoenix-controller:
+        condition: service_healthy
+    networks: [phoenix-mesh-net]
+
+volumes:
+  prometheus_data:
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHOENIX MESH PORT MAP:
+#   9091 -> Prometheus Dashboard
+#   8080 -> Phoenix Controller API
+#   9101 -> Order Sidecar (Metrics & Proxy)
+#   9102 -> Payment Sidecar (Metrics & Proxy)
+# ─────────────────────────────────────────────────────────────────────────────

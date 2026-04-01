@@ -5,7 +5,7 @@ import pino from 'pino';
 import pinoHttp from 'pino-http';
 import k8s from '@kubernetes/client-node';
 
-//Internal Modules
+//internal modules
 import { handleFailure, handleRecovery, getActiveIncidents } from './meshController.js';
 import { initK8sClients } from './rollback.js';
 import { initK8sClient as initLogClient } from './logs.js';
@@ -25,7 +25,7 @@ app.use(pinoHttp({
   genReqId: (req) => req.headers['x-request-id'] || Math.random().toString(36).substring(7)
 }));
 
-// K8s Infra.
+//K8s Infra.
 let k8sReady = false;
 
 function initPhoenixK8s() {
@@ -62,10 +62,7 @@ initPhoenixK8s();
 
 //Incident R
 
-/**
- * Endpoint for Phoenix Sidecars to report a service failure.
- * Matches the logic in sidecar/agent.js
- */
+
 app.post('/api/failure', async (req, res) => {
   const report = req.body;
 
@@ -87,9 +84,6 @@ app.post('/api/failure', async (req, res) => {
   });
 });
 
-/**
- * Endpoint for Phoenix Sidecars to report service recovery.
- */
 app.post('/api/recovery', (req, res) => {
   const report = req.body;
   
@@ -103,7 +97,7 @@ app.post('/api/recovery', (req, res) => {
   res.json({ status: 'recovered', service: report.service });
 });
 
-//Observability R
+//observability R
 
 app.get('/api/incidents', (req, res) => {
   res.json({ 

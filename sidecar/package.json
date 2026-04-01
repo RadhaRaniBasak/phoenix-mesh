@@ -1,0 +1,19 @@
+{
+  "name": "phoenix-mesh",
+  "version": "1.0.0",
+  "description": "Self-healing mesh sidecar agent for the Phoenix Mesh ecosystem",
+  "type": "module",
+  "main": "agent.js",
+  "scripts": {
+    "start": "node agent.js",
+    "dev": "node --watch agent.js"
+  },
+  "author": "Radha Rani Basak",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "express": "^4.18.2",
+    "pino": "^8.17.0",
+    "prom-client": "^15.1.0"
+  }
+}

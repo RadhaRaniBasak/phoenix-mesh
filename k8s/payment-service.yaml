@@ -1,0 +1,88 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phoenix-payment-service
+  namespace: mesh-system
+  labels:
+    app: payment-service
+    app.kubernetes.io/part-of: phoenix-mesh
+spec:
+  replicas: 3
+  revisionHistoryLimit: 20
+  selector:
+    matchLabels:
+      app: payment-service
+      mesh.health: healthy
+  template:
+    metadata:
+      labels:
+        app: payment-service
+        mesh.health: healthy
+    spec:
+
+      serviceAccountName: phoenix-mesh-controller 
+      terminationGracePeriodSeconds: 30
+      
+      containers:
+        - name: payment-service
+          image: your-registry.io/phoenix-payment-service:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: SERVICE_NAME
+              value: "payment-service"
+   
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+        - name: sidecar-agent
+          image: your-registry.io/phoenix-sidecar:latest
+          imagePullPolicy: Always
+          ports:
+            - name: metrics
+              containerPort: 9090
+          env:
+            - name: SERVICE_URL
+              value: "http://localhost:3000"
+            - name: CONTROLLER_URL
+              value: "http://phoenix-mesh-controller.mesh-system.svc.cluster.local:8080"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service
+  namespace: mesh-system
+spec:
+  selector:
+    app: payment-service
+    mesh.health: healthy # Managed by Phoenix Controller
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000

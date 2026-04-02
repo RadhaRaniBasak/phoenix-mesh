@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mesh-system
+  labels:
+    name: mesh-system
+    app.kubernetes.io/part-of: phoenix-mesh
+    app.kubernetes.io/component: control-plane
+    # This label allows us to target the namespace with specific 
+    # NetworkPolicies or Admission Controllers later.
+    phoenix-mesh-injection: disabled

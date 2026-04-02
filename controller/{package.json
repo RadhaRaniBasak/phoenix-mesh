@@ -1,0 +1,32 @@
+{
+  "name": "phoenix-mesh",
+  "version": "1.0.0",
+  "description": "Autonomous self-healing control plane for Phoenix Mesh",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "kubernetes",
+    "mesh",
+    "self-healing",
+    "phoenix-mesh",
+    "sre",
+    "automation"
+  ],
+  "author": "Radha Rani Basak",
+  "license": "MIT",
+  "dependencies": {
+    "@kubernetes/client-node": "^0.21.0",
+    "axios": "^1.6.0",
+    "express": "^4.18.2",
+    "pino": "^8.17.0",
+    "pino-http": "^9.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

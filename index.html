@@ -1,0 +1,1326 @@
+<!DOCTYPE html>
+<!--
+  Safelight — a free, open-source photo color-grading tool.
+  No build step. No account. No server. Everything runs in the browser
+  with the Canvas API, so it works on Android (Chrome), desktop, anywhere.
+
+  DEPLOY FREE:
+    1. Push this file to a GitHub repo as index.html
+    2. Settings -> Pages -> deploy from main branch
+    3. Done — it's live at https://yourname.github.io/reponame
+
+  MAKE IT INSTALLABLE ON ANDROID (no Play Store needed):
+    Chrome will offer "Add to Home Screen" automatically once hosted on
+    https. For a fuller PWA (offline support), add a manifest.json and a
+    tiny service worker — see the note at the end of this file.
+
+  License: MIT — do whatever you want with this, no attribution required.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Safelight — free photo grading</title>
+<meta name="theme-color" content="#14120F">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Expanded:wght@600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --void:#14120F;
+    --panel:#1C1812;
+    --panel-2:#241E16;
+    --line:#332B20;
+    --paper:#F2ECE1;
+    --muted:#9B8F7C;
+    --amber:#E8A33D;
+    --amber-dim:#7A5A26;
+    --danger:#C1543C;
+    --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--void);
+    color:var(--paper);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    min-height:100vh;
+    position:relative;
+    overflow-x:hidden;
+  }
+  body::before{
+    content:"";
+    position:fixed;inset:0;
+    pointer-events:none;
+    opacity:.045;
+    z-index:1;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  h1,h2,.mono{font-family:"IBM Plex Mono",monospace;}
+  .display{font-family:"Archivo Expanded",sans-serif;}
+
+  #app{max-width:1240px;margin:0 auto;padding:0 16px 24px;position:relative;z-index:2;}
+
+  header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:20px 4px 16px;
+    border-bottom:1px solid var(--line);
+    margin-bottom:20px;
+  }
+  .brand{display:flex;align-items:center;gap:10px;}
+  .brand-mark{
+    width:14px;height:14px;border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #ffd489, var(--amber) 55%, var(--amber-dim));
+    box-shadow:0 0 14px rgba(232,163,61,.55);
+  }
+  .brand h1{font-size:15px;letter-spacing:.14em;text-transform:uppercase;margin:0;font-weight:600;}
+  .brand span{color:var(--muted);font-size:11px;display:block;letter-spacing:.04em;margin-top:2px;font-family:-apple-system,sans-serif;}
+  header .tag{color:var(--muted);font-size:11px;letter-spacing:.05em;}
+
+  .editor{display:flex;flex-direction:column;gap:20px;}
+
+  /* ---- canvas stage ---- */
+  .canvas-stage{
+    position:relative;
+    background:
+      linear-gradient(var(--panel),var(--panel)) padding-box,
+      repeating-conic-gradient(#2a2418 0% 25%, #201b12 0% 50%) 0 0/20px 20px;
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    min-height:260px;
+    display:flex;align-items:center;justify-content:center;
+    overflow:hidden;
+  }
+  #canvas{max-width:100%;max-height:70vh;display:block;border-radius:2px;transform-origin:center;}
+  #canvas.hidden{display:none;}
+
+  .dropzone{
+    padding:48px 20px;text-align:center;cursor:pointer;width:100%;
+  }
+  .dropzone .icon{
+    width:44px;height:44px;margin:0 auto 14px;border:1.5px solid var(--amber-dim);
+    border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--amber);
+  }
+  .dropzone h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;margin:0 0 6px;font-weight:600;color:var(--paper);}
+  .dropzone p{color:var(--muted);font-size:12.5px;margin:0;font-family:-apple-system,sans-serif;}
+  .dropzone.drag{border-color:var(--amber);}
+
+  .compare-btn{
+    position:absolute;bottom:12px;right:12px;
+    background:rgba(20,18,15,.75);backdrop-filter:blur(4px);
+    border:1px solid var(--line);color:var(--paper);
+    font-size:11px;letter-spacing:.05em;padding:8px 12px;border-radius:20px;
+    display:none;align-items:center;gap:6px;user-select:none;z-index:3;
+  }
+  .compare-btn.show{display:flex;}
+
+  /* ---- crop overlay ---- */
+  .crop-overlay{position:absolute;display:none;z-index:4;}
+  .crop-overlay.show{display:block;}
+  .crop-box{
+    position:absolute;
+    border:1.5px solid var(--amber);
+    box-shadow:0 0 0 9999px rgba(10,9,7,.62);
+    background-image:
+      linear-gradient(to right, transparent calc(33.33% - .5px), rgba(255,255,255,.35) calc(33.33% - .5px), rgba(255,255,255,.35) calc(33.33% + .5px), transparent calc(33.33% + .5px)),
+      linear-gradient(to right, transparent calc(66.66% - .5px), rgba(255,255,255,.35) calc(66.66% - .5px), rgba(255,255,255,.35) calc(66.66% + .5px), transparent calc(66.66% + .5px)),
+      linear-gradient(to bottom, transparent calc(33.33% - .5px), rgba(255,255,255,.35) calc(33.33% - .5px), rgba(255,255,255,.35) calc(33.33% + .5px), transparent calc(33.33% + .5px)),
+      linear-gradient(to bottom, transparent calc(66.66% - .5px), rgba(255,255,255,.35) calc(66.66% - .5px), rgba(255,255,255,.35) calc(66.66% + .5px), transparent calc(66.66% + .5px));
+    touch-action:none;
+  }
+  .crop-handle{
+    position:absolute;width:26px;height:26px;
+    background:var(--amber);border:2px solid var(--void);border-radius:50%;
+    touch-action:none;
+  }
+  .crop-handle.tl{left:-13px;top:-13px;cursor:nwse-resize;}
+  .crop-handle.br{right:-13px;bottom:-13px;cursor:nwse-resize;}
+
+  /* ---- tabs ---- */
+  .tabs{
+    display:flex;gap:2px;background:var(--panel-2);
+    border:1px solid var(--line);border-radius:var(--radius);padding:3px;
+    overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;
+  }
+  .tabs::-webkit-scrollbar{display:none;}
+  .tabs button{
+    flex:0 0 auto;padding:9px 13px;background:transparent;border:none;color:var(--muted);
+    font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;
+    border-radius:7px;cursor:pointer;font-family:-apple-system,sans-serif;white-space:nowrap;
+  }
+  .tabs button.active{background:var(--panel);color:var(--amber);}
+
+  /* ---- controls ---- */
+  .controls{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:6px 16px;}
+  .panel{display:none;padding:10px 0 4px;}
+  .panel.active{display:block;}
+
+  .slider-row{padding:14px 0;border-bottom:1px solid var(--line);}
+  .slider-row:last-child{border-bottom:none;}
+  .slider-row .row-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;}
+  .slider-row label{font-size:12px;letter-spacing:.04em;color:var(--paper);font-family:-apple-system,sans-serif;}
+  .slider-row .val{font-size:11.5px;color:var(--amber);min-width:52px;text-align:right;}
+
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:24px;background:transparent;cursor:pointer;margin:0;}
+  input[type=range]::-webkit-slider-runnable-track{
+    height:2px;
+    background:repeating-linear-gradient(90deg,var(--line) 0 1px,transparent 1px 11px);
+  }
+  input[type=range]::-moz-range-track{
+    height:2px;
+    background:repeating-linear-gradient(90deg,var(--line) 0 1px,transparent 1px 11px);
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:15px;height:15px;margin-top:-6.5px;border-radius:50%;
+    background:var(--amber);border:2px solid var(--void);
+    box-shadow:0 0 0 4px rgba(232,163,61,.16),0 0 10px rgba(232,163,61,.45);
+  }
+  input[type=range]::-moz-range-thumb{
+    width:15px;height:15px;border-radius:50%;background:var(--amber);border:2px solid var(--void);
+    box-shadow:0 0 0 4px rgba(232,163,61,.16),0 0 10px rgba(232,163,61,.45);
+  }
+  input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px rgba(232,163,61,.35),0 0 0 6px var(--amber);}
+
+  /* ---- presets ---- */
+  .preset-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:14px 0;}
+  .preset-card{
+    background:var(--panel-2);border:1px solid var(--line);border-radius:8px;
+    padding:14px 8px;text-align:center;cursor:pointer;color:var(--muted);
+  }
+  .preset-card .swatch{width:100%;height:34px;border-radius:5px;margin-bottom:10px;}
+  .preset-card span{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;font-family:-apple-system,sans-serif;}
+  .preset-card.active{border-color:var(--amber);color:var(--paper);}
+
+  /* ---- curves ---- */
+  .channel-row{display:flex;gap:6px;padding:12px 0 14px;}
+  .channel-row button{
+    flex:1;padding:7px 4px;background:var(--panel-2);border:1px solid var(--line);color:var(--muted);
+    font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;border-radius:6px;
+    cursor:pointer;font-family:-apple-system,sans-serif;
+  }
+  .channel-row button.active{border-color:var(--amber);color:var(--paper);}
+  #curveCanvas{width:100%;aspect-ratio:1;display:block;border-radius:8px;touch-action:none;cursor:crosshair;border:1px solid var(--line);}
+  .hint{color:var(--muted);font-size:11px;line-height:1.5;margin:12px 0;font-family:-apple-system,sans-serif;}
+  .hint.error{color:var(--danger);}
+  #resetCurveBtn{
+    width:100%;padding:11px;background:transparent;border:1px solid var(--line);color:var(--muted);
+    border-radius:8px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;
+    font-family:-apple-system,sans-serif;margin-bottom:6px;
+  }
+
+  /* ---- crop panel ---- */
+  .subtabs{display:flex;gap:8px;padding:12px 0;}
+  .subtabs .sub{
+    flex:1;padding:9px 4px;background:var(--panel-2);border:1px solid var(--line);color:var(--muted);
+    font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;font-weight:600;border-radius:7px;
+    cursor:pointer;font-family:-apple-system,sans-serif;
+  }
+  .subtabs .sub.active{border-color:var(--amber);color:var(--paper);}
+  .subpanel{display:none;}
+  .subpanel.active{display:block;}
+  .rotate90-row{display:flex;gap:10px;padding-bottom:6px;}
+  .rotate90-row button{
+    flex:1;padding:13px;background:var(--panel-2);border:1px solid var(--line);color:var(--paper);
+    border-radius:8px;font-size:12px;cursor:pointer;font-family:-apple-system,sans-serif;
+  }
+  .apply-btn{
+    width:100%;padding:12px;background:var(--amber);color:var(--void);border:1px solid var(--amber);
+    border-radius:8px;font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;
+    cursor:pointer;font-family:-apple-system,sans-serif;margin-top:4px;
+  }
+  .apply-btn:disabled{opacity:.35;pointer-events:none;}
+  .ratio-row{display:flex;gap:6px;padding:4px 0 6px;flex-wrap:wrap;}
+  .ratio{
+    padding:8px 12px;background:var(--panel-2);border:1px solid var(--line);color:var(--muted);
+    font-size:11px;border-radius:7px;cursor:pointer;font-family:-apple-system,sans-serif;
+  }
+  .ratio.active{border-color:var(--amber);color:var(--paper);}
+  .crop-btn-row{display:flex;gap:10px;margin-top:10px;}
+  .crop-btn-row #resetCropBtn{
+    flex:0 0 auto;padding:12px 16px;background:transparent;border:1px solid var(--line);color:var(--muted);
+    border-radius:8px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;cursor:pointer;
+    font-family:-apple-system,sans-serif;
+  }
+  .crop-btn-row .apply-btn{margin-top:0;flex:1;}
+
+  /* ---- lut panel ---- */
+  .lut-upload{padding:12px 0 4px;}
+  #lutUploadBtn{
+    width:100%;padding:13px;background:var(--panel-2);border:1px dashed var(--amber-dim);color:var(--amber);
+    border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:-apple-system,sans-serif;
+  }
+  .lut-list{display:flex;flex-wrap:wrap;gap:8px;padding:14px 0;}
+  .lut-chip{
+    display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--panel-2);
+    border:1px solid var(--line);border-radius:20px;font-size:11.5px;color:var(--muted);cursor:pointer;
+    font-family:-apple-system,sans-serif;
+  }
+  .lut-chip.active{border-color:var(--amber);color:var(--paper);}
+  .lut-chip .chip-x{background:none;border:none;color:var(--muted);font-size:14px;cursor:pointer;line-height:1;padding:0;}
+
+  /* ---- action bar ---- */
+  .action-bar{
+    display:flex;gap:10px;position:sticky;bottom:0;padding:12px 0 4px;
+    background:linear-gradient(180deg, rgba(20,18,15,0), var(--void) 30%);
+  }
+  .action-bar button{
+    flex:1;padding:13px;border-radius:var(--radius);border:1px solid var(--line);
+    font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;cursor:pointer;
+    font-family:-apple-system,sans-serif;
+  }
+  #resetBtn{background:transparent;color:var(--muted);}
+  #downloadBtn{background:var(--amber);color:var(--void);border-color:var(--amber);}
+  .action-bar button:disabled{opacity:.4;pointer-events:none;}
+
+  footer.credit{text-align:center;color:var(--muted);font-size:10.5px;padding:18px 0 4px;letter-spacing:.03em;}
+
+  @media (min-width:900px){
+    .editor{display:grid;grid-template-columns:1fr 360px;gap:20px;align-items:start;}
+    .canvas-stage{grid-column:1;grid-row:1;min-height:560px;}
+    .tabs{grid-column:2;grid-row:1;}
+    .controls{grid-column:2;grid-row:2;max-height:56vh;overflow-y:auto;}
+    .action-bar{grid-column:2;grid-row:3;position:static;background:none;}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <div class="brand">
+      <div class="brand-mark"></div>
+      <div>
+        <h1>Safelight</h1>
+        <span>free · open-source · runs in your browser</span>
+      </div>
+    </div>
+    <div class="tag mono" id="dims"></div>
+  </header>
+
+  <div class="editor">
+
+    <div class="canvas-stage" id="stage">
+      <canvas id="canvas" class="hidden"></canvas>
+      <div class="dropzone" id="dropzone">
+        <div class="icon">▲</div>
+        <h2>Drop a photo, or tap to choose</h2>
+        <p>JPG or PNG · edited entirely on your device</p>
+      </div>
+      <button class="compare-btn" id="compareBtn">◐ hold to compare</button>
+      <div class="crop-overlay" id="cropOverlay">
+        <div class="crop-box" id="cropBox">
+          <div class="crop-handle tl" id="handleTL"></div>
+          <div class="crop-handle br" id="handleBR"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button data-tab="crop">Crop</button>
+      <button data-tab="light" class="active">Light</button>
+      <button data-tab="color">Color</button>
+      <button data-tab="curves">Curves</button>
+      <button data-tab="effects">Effects</button>
+      <button data-tab="lut">LUT</button>
+      <button data-tab="presets">Presets</button>
+    </div>
+
+    <div class="controls">
+      <div class="panel" id="panel-crop">
+        <div class="subtabs">
+          <button class="sub active" data-sub="rotate">Rotate &amp; Straighten</button>
+          <button class="sub" data-sub="area">Crop Area</button>
+        </div>
+        <div class="subpanel active" id="sub-rotate">
+          <div class="rotate90-row">
+            <button id="rot-ccw">↺ Rotate Left</button>
+            <button id="rot-cw">↻ Rotate Right</button>
+          </div>
+          <div class="slider-row" style="padding-bottom:6px;border-bottom:none;">
+            <div class="row-top"><label for="s-straighten">Straighten</label><span class="val mono" id="v-straighten">0°</span></div>
+            <input type="range" id="s-straighten" min="-45" max="45" step="0.5" value="0">
+          </div>
+          <button id="applyStraightenBtn" class="apply-btn" disabled>Apply Straighten</button>
+        </div>
+        <div class="subpanel" id="sub-area">
+          <div class="ratio-row" id="ratioRow">
+            <button class="ratio active" data-ratio="free">Free</button>
+            <button class="ratio" data-ratio="1">1:1</button>
+            <button class="ratio" data-ratio="0.8">4:5</button>
+            <button class="ratio" data-ratio="0.5625">9:16</button>
+            <button class="ratio" data-ratio="1.778">16:9</button>
+          </div>
+          <p class="hint">Drag the corner handles to resize, drag inside the box to move it.</p>
+          <div class="crop-btn-row">
+            <button id="resetCropBtn">Reset</button>
+            <button id="applyCropBtn" class="apply-btn">Apply Crop</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel active" id="panel-light"></div>
+      <div class="panel" id="panel-color"></div>
+
+      <div class="panel" id="panel-curves">
+        <div class="channel-row" id="channelRow">
+          <button class="chan active" data-ch="master">Master</button>
+          <button class="chan" data-ch="r">R</button>
+          <button class="chan" data-ch="g">G</button>
+          <button class="chan" data-ch="b">B</button>
+        </div>
+        <canvas id="curveCanvas" width="256" height="256"></canvas>
+        <p class="hint">Tap the curve to add a point, drag to shape it, double-tap a point to remove it.</p>
+        <button id="resetCurveBtn">Reset This Channel</button>
+      </div>
+
+      <div class="panel" id="panel-effects"></div>
+
+      <div class="panel" id="panel-lut">
+        <div class="lut-upload">
+          <input type="file" id="lutFile" accept=".cube" hidden>
+          <button id="lutUploadBtn">+ Upload .cube LUT</button>
+          <p class="hint" id="lutStatus">Standard 33-point 3D LUTs (.cube format). Processed entirely on your device.</p>
+        </div>
+        <div class="lut-list" id="lutList"></div>
+        <div class="slider-row" id="lutIntensityRow" style="display:none;border-bottom:none;">
+          <div class="row-top"><label for="s-lutIntensity">Intensity</label><span class="val mono" id="v-lutIntensity">100%</span></div>
+          <input type="range" id="s-lutIntensity" min="0" max="100" step="1" value="100">
+        </div>
+      </div>
+
+      <div class="panel" id="panel-presets">
+        <div class="preset-grid" id="presetGrid"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="action-bar">
+    <button id="resetBtn" disabled>Reset</button>
+    <button id="downloadBtn" disabled>Export JPG</button>
+  </div>
+
+  <footer class="credit">MIT licensed — fork it, rename it, ship it.</footer>
+</div>
+
+<input type="file" id="fileInput" accept="image/*" hidden>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ================= math helpers ================= */
+
+  function clamp(v,lo,hi){ return v<lo?lo:v>hi?hi:v; }
+  function clamp8(v){ v = v<0?0:v>255?255:v; return v|0; }
+  function smoothstep(e0,e1,x){
+    const t = clamp((x-e0)/(e1-e0),0,1);
+    return t*t*(3-2*t);
+  }
+
+  function rgbToHsl(r,g,b){
+    r/=255; g/=255; b/=255;
+    const max=Math.max(r,g,b), min=Math.min(r,g,b);
+    let h=0,s=0; const l=(max+min)/2;
+    const d=max-min;
+    if(d!==0){
+      s = l>0.5 ? d/(2-max-min) : d/(max+min);
+      switch(max){
+        case r: h=(g-b)/d+(g<b?6:0); break;
+        case g: h=(b-r)/d+2; break;
+        default: h=(r-g)/d+4;
+      }
+      h/=6;
+    }
+    return [h,s,l];
+  }
+  function hue2rgb(p,q,t){
+    if(t<0)t+=1; if(t>1)t-=1;
+    if(t<1/6) return p+(q-p)*6*t;
+    if(t<1/2) return q;
+    if(t<2/3) return p+(q-p)*(2/3-t)*6;
+    return p;
+  }
+  function hslToRgb(h,s,l){
+    if(s===0){ const v=l*255; return [v,v,v]; }
+    const q = l<0.5 ? l*(1+s) : l+s-l*s;
+    const p = 2*l-q;
+    return [ hue2rgb(p,q,h+1/3)*255, hue2rgb(p,q,h)*255, hue2rgb(p,q,h-1/3)*255 ];
+  }
+
+  // Largest axis-aligned rectangle that fits inside a w x h rectangle
+  // once that rectangle has been rotated by `angle` radians. Used to
+  // auto-crop blank corners after straightening a photo.
+  function rotatedRectMaxArea(w, h, angle){
+    if(w<=0||h<=0) return {w:0,h:0};
+    const longer = w>=h;
+    const longSide = longer? w:h, shortSide = longer? h:w;
+    let a = Math.abs(angle) % Math.PI;
+    if(a > Math.PI/2) a = Math.PI - a;
+    const sinA = Math.sin(a), cosA = Math.cos(a);
+    if(shortSide <= 2*sinA*cosA*longSide + 1e-9 || Math.abs(sinA-cosA) < 1e-10){
+      const x = 0.5*shortSide;
+      return longer ? {w:x/sinA, h:x/cosA} : {w:x/cosA, h:x/sinA};
+    }
+    const cos2 = cosA*cosA - sinA*sinA;
+    return { w:(w*cosA - h*sinA)/cos2, h:(h*cosA - w*sinA)/cos2 };
+  }
+
+  // Monotone cubic Hermite interpolation (Fritsch-Carlson) through
+  // sorted [x,y] control points, sampled into a 256-entry lookup table.
+  function buildMonotoneCubic(points){
+    const n = points.length;
+    const lut = new Uint8ClampedArray(256);
+    if(n<2){ for(let i=0;i<256;i++) lut[i]=i; return lut; }
+    const xs = points.map(p=>p[0]), ys = points.map(p=>p[1]);
+    if(n===2){
+      const x0=xs[0],y0=ys[0],x1=xs[1],y1=ys[1];
+      for(let i=0;i<256;i++){
+        const t = x1===x0 ? 0 : (i-x0)/(x1-x0);
+        lut[i]=clamp8(y0+(y1-y0)*t);
+      }
+      return lut;
+    }
+    const m = new Array(n-1);
+    for(let i=0;i<n-1;i++){
+      const dx = xs[i+1]-xs[i];
+      m[i] = dx===0 ? 0 : (ys[i+1]-ys[i])/dx;
+    }
+    const t = new Array(n);
+    t[0]=m[0]; t[n-1]=m[n-2];
+    for(let i=1;i<n-1;i++) t[i] = (m[i-1]*m[i] <= 0) ? 0 : (m[i-1]+m[i])/2;
+    for(let i=0;i<n-1;i++){
+      if(m[i]===0){ t[i]=0; t[i+1]=0; continue; }
+      const a=t[i]/m[i], b=t[i+1]/m[i], s=a*a+b*b;
+      if(s>9){ const sc=3/Math.sqrt(s); t[i]=sc*a*m[i]; t[i+1]=sc*b*m[i]; }
+    }
+    let seg=0;
+    for(let x=0;x<256;x++){
+      while(seg<n-2 && x>xs[seg+1]) seg++;
+      const x0=xs[seg],x1=xs[seg+1],y0=ys[seg],y1=ys[seg+1];
+      const hh=x1-x0;
+      if(hh<=0){ lut[x]=clamp8(y0); continue; }
+      const tt=(x-x0)/hh, tt2=tt*tt, tt3=tt2*tt;
+      const h00=2*tt3-3*tt2+1, h10=tt3-2*tt2+tt, h01=-2*tt3+3*tt2, h11=tt3-tt2;
+      lut[x]=clamp8(h00*y0 + h10*hh*t[seg] + h01*y1 + h11*hh*t[seg+1]);
+    }
+    return lut;
+  }
+  function isIdentityCurve(points){
+    return points.length===2 && points[0][0]===0 && points[0][1]===0 && points[1][0]===255 && points[1][1]===255;
+  }
+
+  // Trilinear-interpolated sample from a parsed 3D .cube LUT.
+  // r,g,b in [0,1]; result written into `out` (length-3 array) to avoid allocation.
+  function sampleCubeLUTInto(lutObj, r, g, b, out){
+    const n = lutObj.size, d = lutObj.data;
+    const rf=clamp(r,0,1)*(n-1), gf=clamp(g,0,1)*(n-1), bf=clamp(b,0,1)*(n-1);
+    let r0=rf|0, g0=gf|0, b0=bf|0;
+    if(r0>n-2) r0=n-2; if(g0>n-2) g0=n-2; if(b0>n-2) b0=n-2;
+    const r1=r0+1, g1=g0+1, b1=b0+1;
+    const fr=rf-r0, fg=gf-g0, fb=bf-b0;
+    const i000=((b0*n+g0)*n+r0)*3, i100=((b0*n+g0)*n+r1)*3;
+    const i010=((b0*n+g1)*n+r0)*3, i110=((b0*n+g1)*n+r1)*3;
+    const i001=((b1*n+g0)*n+r0)*3, i101=((b1*n+g0)*n+r1)*3;
+    const i011=((b1*n+g1)*n+r0)*3, i111=((b1*n+g1)*n+r1)*3;
+    for(let k=0;k<3;k++){
+      const c00=d[i000+k]*(1-fr)+d[i100+k]*fr;
+      const c10=d[i010+k]*(1-fr)+d[i110+k]*fr;
+      const c01=d[i001+k]*(1-fr)+d[i101+k]*fr;
+      const c11=d[i011+k]*(1-fr)+d[i111+k]*fr;
+      const c0=c00*(1-fg)+c10*fg, c1=c01*(1-fg)+c11*fg;
+      out[k]=c0*(1-fb)+c1*fb;
+    }
+  }
+
+  function parseCubeLUT(text){
+    const lines = text.split(/\r?\n/);
+    let size = 0;
+    const data = [];
+    let domainMin=[0,0,0], domainMax=[1,1,1];
+    for(const raw of lines){
+      const line = raw.trim();
+      if(!line || line.startsWith('#') || /^TITLE/i.test(line)) continue;
+      if(/^LUT_1D_SIZE/i.test(line)) throw new Error('1D LUTs are not supported — use a 3D .cube LUT');
+      if(/^LUT_3D_SIZE/i.test(line)){ size=parseInt(line.split(/\s+/)[1],10); continue; }
+      if(/^DOMAIN_MIN/i.test(line)){ domainMin=line.split(/\s+/).slice(1).map(Number); continue; }
+      if(/^DOMAIN_MAX/i.test(line)){ domainMax=line.split(/\s+/).slice(1).map(Number); continue; }
+      const parts = line.split(/\s+/).map(Number);
+      if(parts.length===3 && parts.every(nn=>!isNaN(nn))) data.push(parts);
+    }
+    if(!size || data.length !== size*size*size){
+      throw new Error('Could not parse this file as a 3D .cube LUT');
+    }
+    const flat = new Float32Array(size*size*size*3);
+    for(let i=0;i<data.length;i++){
+      const rng = [domainMax[0]-domainMin[0], domainMax[1]-domainMin[1], domainMax[2]-domainMin[2]];
+      flat[i*3]   = rng[0]===0 ? data[i][0] : (data[i][0]-domainMin[0])/rng[0];
+      flat[i*3+1] = rng[1]===0 ? data[i][1] : (data[i][1]-domainMin[1])/rng[1];
+      flat[i*3+2] = rng[2]===0 ? data[i][2] : (data[i][2]-domainMin[2])/rng[2];
+    }
+    return {size, data:flat};
+  }
+
+  /* ================= adjustment pipeline ================= */
+
+  const DEFAULT_ADJ = {
+    exposure:0, contrast:0, highlights:0, shadows:0, whites:0, blacks:0,
+    temperature:0, tint:0, saturation:0, vibrance:0,
+    vignette:0, grain:0
+  };
+
+  // Applies exposure/tone/color, curves, an optional LUT, then vignette
+  // and grain — all in a single pass over the pixel buffer.
+  function applyAdjustments(imageData, adj){
+    const d = imageData.data;
+    const w = imageData.width, h = imageData.height;
+    const expMul = Math.pow(2, adj.exposure);
+    const cst = adj.contrast;
+    const contrastFactor = (259*(cst+255)) / (255*(259-cst));
+    const tempShift = adj.temperature * 0.6;
+    const tintShift = adj.tint * 0.5;
+    const needsTone = !!(adj.highlights||adj.shadows||adj.whites||adj.blacks);
+    const needsHsl = adj.saturation !== 0 || adj.vibrance !== 0;
+    const needsCurves = state.curvesActive;
+    const curveLUT = state.curveLUT;
+    const needsLUT = !!(state.lut && state.lut.active);
+    const lutObj = needsLUT ? state.lut.active : null;
+    const lutAmt = needsLUT ? state.lut.intensity/100 : 0;
+    const lutTmp = [0,0,0];
+    const needsVignette = adj.vignette !== 0;
+    const needsGrain = adj.grain !== 0;
+    const cx=w/2, cy=h/2;
+    const maxDist = Math.sqrt(cx*cx+cy*cy);
+
+    for(let i=0;i<d.length;i+=4){
+      let r=d[i], g=d[i+1], b=d[i+2];
+
+      r*=expMul; g*=expMul; b*=expMul;
+
+      r += tempShift; b -= tempShift;
+      g += tintShift; r -= tintShift*0.5; b -= tintShift*0.5;
+
+      r = contrastFactor*(r-128)+128;
+      g = contrastFactor*(g-128)+128;
+      b = contrastFactor*(b-128)+128;
+
+      if(needsTone){
+        const lum = 0.299*r+0.587*g+0.114*b;
+        if(adj.highlights){
+          const wgt = smoothstep(120,255,lum);
+          const f = 1 + (adj.highlights/100)*wgt*0.55;
+          r*=f; g*=f; b*=f;
+        }
+        if(adj.shadows){
+          const wgt = 1 - smoothstep(0,140,lum);
+          const f = 1 + (adj.shadows/100)*wgt*0.55;
+          r*=f; g*=f; b*=f;
+        }
+        if(adj.whites){
+          const wgt = smoothstep(195,255,lum);
+          const add = (adj.whites/100)*wgt*45;
+          r+=add; g+=add; b+=add;
+        }
+        if(adj.blacks){
+          const wgt = 1 - smoothstep(0,65,lum);
+          const add = (adj.blacks/100)*wgt*45;
+          r+=add; g+=add; b+=add;
+        }
+      }
+
+      if(needsHsl){
+        const hsl = rgbToHsl(clamp8(r),clamp8(g),clamp8(b));
+        let ns = hsl[1]*(1+adj.saturation/100);
+        if(adj.vibrance) ns += (adj.vibrance/100)*(1-hsl[1])*hsl[1]*2.2;
+        ns = clamp(ns,0,1);
+        const rgb = hslToRgb(hsl[0],ns,hsl[2]);
+        r=rgb[0]; g=rgb[1]; b=rgb[2];
+      }
+
+      if(needsCurves){
+        r = curveLUT.r[clamp8(r)];
+        g = curveLUT.g[clamp8(g)];
+        b = curveLUT.b[clamp8(b)];
+      }
+
+      if(needsLUT){
+        sampleCubeLUTInto(lutObj, clamp8(r)/255, clamp8(g)/255, clamp8(b)/255, lutTmp);
+        r = r + (lutTmp[0]*255 - r)*lutAmt;
+        g = g + (lutTmp[1]*255 - g)*lutAmt;
+        b = b + (lutTmp[2]*255 - b)*lutAmt;
+      }
+
+      if(needsVignette){
+        const px=(i/4)%w, py=Math.floor((i/4)/w);
+        const dist = Math.sqrt((px-cx)**2+(py-cy)**2)/maxDist;
+        const fall = smoothstep(0.35,1.1,dist);
+        const f = 1 - fall*(adj.vignette/100)*0.85;
+        r*=f; g*=f; b*=f;
+      }
+
+      if(needsGrain){
+        const n = (Math.random()-0.5)*adj.grain*1.1;
+        r+=n; g+=n; b+=n;
+      }
+
+      d[i]=clamp8(r); d[i+1]=clamp8(g); d[i+2]=clamp8(b);
+    }
+    return imageData;
+  }
+
+  /* ================= presets ================= */
+
+  const PRESETS = [
+    { key:'original', name:'Original', swatch:'linear-gradient(135deg,#888,#bbb)', adj:{...DEFAULT_ADJ} },
+    { key:'goldenHour', name:'Golden Hour', swatch:'linear-gradient(135deg,#ffb35c,#7a3b12)',
+      adj:{exposure:0.15,contrast:8,highlights:-15,shadows:20,whites:5,blacks:-5,temperature:22,tint:-4,saturation:6,vibrance:18,vignette:14,grain:5} },
+    { key:'tealAmber', name:'Teal & Amber', swatch:'linear-gradient(135deg,#e8a33d,#1c5f5a)',
+      adj:{exposure:0.05,contrast:16,highlights:-12,shadows:10,whites:0,blacks:-10,temperature:8,tint:-10,saturation:-6,vibrance:22,vignette:18,grain:2} },
+    { key:'moodyFade', name:'Moody Fade', swatch:'linear-gradient(135deg,#5c5346,#221f1a)',
+      adj:{exposure:-0.1,contrast:-14,highlights:-20,shadows:18,whites:-18,blacks:14,temperature:-4,tint:3,saturation:-16,vibrance:6,vignette:16,grain:9} },
+    { key:'noir', name:'Noir', swatch:'linear-gradient(135deg,#eee,#222)',
+      adj:{exposure:0.1,contrast:28,highlights:-10,shadows:-8,whites:12,blacks:-16,temperature:0,tint:0,saturation:-100,vibrance:0,vignette:26,grain:11} },
+    { key:'coolSlate', name:'Cool Slate', swatch:'linear-gradient(135deg,#7c93a8,#2b3947)',
+      adj:{exposure:0,contrast:6,highlights:-6,shadows:6,whites:0,blacks:0,temperature:-18,tint:7,saturation:-8,vibrance:10,vignette:8,grain:0} },
+  ];
+
+  const SLIDERS = [
+    {key:'exposure',    tab:'light', label:'Exposure',    min:-1,  max:1,  step:0.01, fmt:v=>(v>0?'+':'')+v.toFixed(2)+' EV'},
+    {key:'contrast',    tab:'light', label:'Contrast',    min:-100,max:100,step:1},
+    {key:'highlights',  tab:'light', label:'Highlights',  min:-100,max:100,step:1},
+    {key:'shadows',     tab:'light', label:'Shadows',     min:-100,max:100,step:1},
+    {key:'whites',      tab:'light', label:'Whites',      min:-100,max:100,step:1},
+    {key:'blacks',      tab:'light', label:'Blacks',      min:-100,max:100,step:1},
+    {key:'temperature', tab:'color', label:'Temperature', min:-50, max:50, step:1},
+    {key:'tint',        tab:'color', label:'Tint',        min:-50, max:50, step:1},
+    {key:'saturation',  tab:'color', label:'Saturation',  min:-100,max:100,step:1},
+    {key:'vibrance',    tab:'color', label:'Vibrance',    min:-100,max:100,step:1},
+    {key:'vignette',    tab:'effects', label:'Vignette',  min:0,   max:100,step:1},
+    {key:'grain',       tab:'effects', label:'Grain',     min:0,   max:100,step:1},
+  ];
+
+  /* ================= app state ================= */
+
+  const state = {
+    adj: {...DEFAULT_ADJ},
+    curves: { master:[[0,0],[255,255]], r:[[0,0],[255,255]], g:[[0,0],[255,255]], b:[[0,0],[255,255]] },
+    curveChannel: 'master',
+    curveLUT: null,
+    curvesActive: false,
+    lut: { loaded:[], active:null, intensity:100 },
+    crop: { rect:{x:0,y:0,w:1,h:1}, aspect:null }
+  };
+
+  const baseCanvas = document.createElement('canvas');
+  const baseCtx = baseCanvas.getContext('2d');
+  let previewSourceData = null;
+  const MAX_PREVIEW_DIM = 1400;
+  const MAX_EXPORT_DIM = 4096;
+
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const compareBtn = document.getElementById('compareBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const dimsLabel = document.getElementById('dims');
+  const cropOverlay = document.getElementById('cropOverlay');
+  const cropBox = document.getElementById('cropBox');
+  const stage = document.getElementById('stage');
+  const curveCanvas = document.getElementById('curveCanvas');
+  const cctx = curveCanvas.getContext('2d');
+
+  /* ================= sliders / presets / tabs ================= */
+
+  function buildSliders(){
+    ['light','color','effects'].forEach(tab=>{
+      const panel = document.getElementById('panel-'+tab);
+      SLIDERS.filter(s=>s.tab===tab).forEach(cfg=>{
+        const row = document.createElement('div');
+        row.className='slider-row';
+        row.innerHTML = `
+          <div class="row-top">
+            <label for="s-${cfg.key}">${cfg.label}</label>
+            <span class="val mono" id="v-${cfg.key}">0</span>
+          </div>
+          <input type="range" id="s-${cfg.key}" min="${cfg.min}" max="${cfg.max}" step="${cfg.step}" value="0">
+        `;
+        panel.appendChild(row);
+        row.querySelector('input').addEventListener('input', e=>{
+          state.adj[cfg.key] = parseFloat(e.target.value);
+          updateValueLabel(cfg);
+          document.querySelectorAll('.preset-card').forEach(c=>c.classList.remove('active'));
+          scheduleRender();
+        });
+      });
+    });
+  }
+  function updateValueLabel(cfg){
+    const v = state.adj[cfg.key];
+    document.getElementById('v-'+cfg.key).textContent = cfg.fmt ? cfg.fmt(v) : (v>0?'+':'')+v;
+  }
+  function syncSlidersFromState(){
+    SLIDERS.forEach(cfg=>{
+      document.getElementById('s-'+cfg.key).value = state.adj[cfg.key];
+      updateValueLabel(cfg);
+    });
+  }
+  function buildPresets(){
+    const grid = document.getElementById('presetGrid');
+    PRESETS.forEach(p=>{
+      const card = document.createElement('div');
+      card.className = 'preset-card' + (p.key==='original' ? ' active':'');
+      card.dataset.key = p.key;
+      card.innerHTML = `<div class="swatch" style="background:${p.swatch}"></div><span>${p.name}</span>`;
+      card.addEventListener('click', ()=>{
+        state.adj = {...p.adj};
+        syncSlidersFromState();
+        document.querySelectorAll('.preset-card').forEach(c=>c.classList.remove('active'));
+        card.classList.add('active');
+        renderPreview();
+      });
+      grid.appendChild(card);
+    });
+  }
+  function buildTabs(){
+    document.querySelectorAll('.tabs button').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('active'));
+        document.querySelectorAll('.controls > .panel').forEach(p=>p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('panel-'+btn.dataset.tab).classList.add('active');
+        if(btn.dataset.tab==='crop'){
+          const activeSub = document.querySelector('.subtabs .sub.active');
+          if(activeSub && activeSub.dataset.sub==='area'){
+            cropOverlay.classList.add('show');
+            requestAnimationFrame(syncCropOverlayGeometry);
+          }
+        } else {
+          cropOverlay.classList.remove('show');
+          canvas.style.transform='';
+        }
+      });
+    });
+    document.querySelectorAll('.subtabs .sub').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        document.querySelectorAll('.subtabs .sub').forEach(b=>b.classList.remove('active'));
+        document.querySelectorAll('.subpanel').forEach(p=>p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('sub-'+btn.dataset.sub).classList.add('active');
+        if(btn.dataset.sub==='area'){
+          cropOverlay.classList.add('show');
+          canvas.style.transform='';
+          requestAnimationFrame(syncCropOverlayGeometry);
+        } else {
+          cropOverlay.classList.remove('show');
+        }
+      });
+    });
+  }
+
+  /* ================= curves UI ================= */
+
+  function rebuildCurveLUTs(){
+    const masterLUT = buildMonotoneCubic(state.curves.master);
+    const rLUT = buildMonotoneCubic(state.curves.r);
+    const gLUT = buildMonotoneCubic(state.curves.g);
+    const bLUT = buildMonotoneCubic(state.curves.b);
+    const cr=new Uint8ClampedArray(256), cg=new Uint8ClampedArray(256), cb=new Uint8ClampedArray(256);
+    for(let i=0;i<256;i++){ cr[i]=rLUT[masterLUT[i]]; cg[i]=gLUT[masterLUT[i]]; cb[i]=bLUT[masterLUT[i]]; }
+    state.curveLUT = {r:cr,g:cg,b:cb};
+    state.curvesActive = !isIdentityCurve(state.curves.master) || !isIdentityCurve(state.curves.r) ||
+                          !isIdentityCurve(state.curves.g) || !isIdentityCurve(state.curves.b);
+  }
+  function resetCurves(){
+    state.curves = { master:[[0,0],[255,255]], r:[[0,0],[255,255]], g:[[0,0],[255,255]], b:[[0,0],[255,255]] };
+    rebuildCurveLUTs();
+    drawCurveEditor();
+  }
+  function drawCurveLine(points, color, withPoints){
+    const cw=curveCanvas.width, ch=curveCanvas.height;
+    const lut = buildMonotoneCubic(points);
+    cctx.strokeStyle=color; cctx.lineWidth=2; cctx.beginPath();
+    for(let x=0;x<256;x++){
+      const y = ch - (lut[x]/255)*ch;
+      const px = (x/255)*cw;
+      if(x===0) cctx.moveTo(px,y); else cctx.lineTo(px,y);
+    }
+    cctx.stroke();
+    if(withPoints){
+      points.forEach(p=>{
+        const px=(p[0]/255)*cw, py=ch-(p[1]/255)*ch;
+        cctx.beginPath(); cctx.arc(px,py,6,0,Math.PI*2);
+        cctx.fillStyle='#14120F'; cctx.fill();
+        cctx.lineWidth=2; cctx.strokeStyle=color; cctx.stroke();
+      });
+    }
+  }
+  function drawCurveEditor(){
+    const cw=curveCanvas.width, ch=curveCanvas.height;
+    cctx.clearRect(0,0,cw,ch);
+    cctx.fillStyle='#241E16'; cctx.fillRect(0,0,cw,ch);
+    cctx.strokeStyle='rgba(255,255,255,.08)'; cctx.lineWidth=1;
+    [0.25,0.5,0.75].forEach(f=>{
+      cctx.beginPath(); cctx.moveTo(f*cw,0); cctx.lineTo(f*cw,ch); cctx.stroke();
+      cctx.beginPath(); cctx.moveTo(0,f*ch); cctx.lineTo(cw,f*ch); cctx.stroke();
+    });
+    cctx.strokeStyle='rgba(255,255,255,.18)';
+    cctx.beginPath(); cctx.moveTo(0,ch); cctx.lineTo(cw,0); cctx.stroke();
+    if(state.curveChannel!=='master') drawCurveLine(state.curves.master, 'rgba(232,163,61,.35)', false);
+    const colors={master:'#E8A33D', r:'#E0685A', g:'#6FCB7A', b:'#5C9DE0'};
+    drawCurveLine(state.curves[state.curveChannel], colors[state.curveChannel], true);
+  }
+  function curvePointFromEvent(e){
+    const rect = curveCanvas.getBoundingClientRect();
+    const px = clamp((e.clientX-rect.left)/rect.width*255,0,255);
+    const py = clamp((e.clientY-rect.top)/rect.height*255,0,255);
+    return {x:px, y:255-py};
+  }
+  function findNearbyPoint(pts,x,y){
+    for(let i=0;i<pts.length;i++){
+      const dx=pts[i][0]-x, dy=pts[i][1]-y;
+      if(Math.sqrt(dx*dx+dy*dy) < 16) return i;
+    }
+    return -1;
+  }
+  let curveDragIdx = -1;
+  function initCurvesUI(){
+    document.querySelectorAll('.chan').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        document.querySelectorAll('.chan').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        state.curveChannel = btn.dataset.ch;
+        drawCurveEditor();
+      });
+    });
+    document.getElementById('resetCurveBtn').addEventListener('click', ()=>{
+      state.curves[state.curveChannel] = [[0,0],[255,255]];
+      rebuildCurveLUTs(); drawCurveEditor(); scheduleRender();
+    });
+    curveCanvas.addEventListener('pointerdown', e=>{
+      const {x,y} = curvePointFromEvent(e);
+      const pts = state.curves[state.curveChannel];
+      const hit = findNearbyPoint(pts,x,y);
+      if(hit>=0){ curveDragIdx = hit; }
+      else {
+        let at = pts.findIndex(p=>p[0]>x);
+        if(at===-1) at = pts.length;
+        pts.splice(at,0,[x,y]);
+        curveDragIdx = at;
+      }
+      curveCanvas.setPointerCapture(e.pointerId);
+      rebuildCurveLUTs(); drawCurveEditor(); scheduleRender();
+    });
+    curveCanvas.addEventListener('pointermove', e=>{
+      if(curveDragIdx<0) return;
+      const {x,y} = curvePointFromEvent(e);
+      const pts = state.curves[state.curveChannel];
+      const isEndpoint = curveDragIdx===0 || curveDragIdx===pts.length-1;
+      let nx = pts[curveDragIdx][0];
+      if(!isEndpoint){
+        const minX = pts[curveDragIdx-1][0]+2, maxX = pts[curveDragIdx+1][0]-2;
+        nx = clamp(x, Math.min(minX,maxX), Math.max(minX,maxX));
+      }
+      pts[curveDragIdx] = [nx, clamp(y,0,255)];
+      rebuildCurveLUTs(); drawCurveEditor(); scheduleRender();
+    });
+    curveCanvas.addEventListener('pointerup', ()=>{ curveDragIdx=-1; });
+    curveCanvas.addEventListener('pointercancel', ()=>{ curveDragIdx=-1; });
+    curveCanvas.addEventListener('dblclick', e=>{
+      const {x,y} = curvePointFromEvent(e);
+      const pts = state.curves[state.curveChannel];
+      const hit = findNearbyPoint(pts,x,y);
+      if(hit>0 && hit<pts.length-1){
+        pts.splice(hit,1);
+        rebuildCurveLUTs(); drawCurveEditor(); scheduleRender();
+      }
+    });
+  }
+
+  /* ================= crop / rotate UI ================= */
+
+  function updateCropBoxStyle(){
+    const r = state.crop.rect;
+    cropBox.style.left = (r.x*100)+'%';
+    cropBox.style.top = (r.y*100)+'%';
+    cropBox.style.width = (r.w*100)+'%';
+    cropBox.style.height = (r.h*100)+'%';
+    document.getElementById('handleTL').style.display = state.crop.aspect ? 'none' : 'block';
+  }
+  function syncCropOverlayGeometry(){
+    const stageRect = stage.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    cropOverlay.style.left = (canvasRect.left - stageRect.left)+'px';
+    cropOverlay.style.top = (canvasRect.top - stageRect.top)+'px';
+    cropOverlay.style.width = canvasRect.width+'px';
+    cropOverlay.style.height = canvasRect.height+'px';
+    updateCropBoxStyle();
+  }
+  function resetCropState(){
+    state.crop = { rect:{x:0,y:0,w:1,h:1}, aspect:null };
+    document.querySelectorAll('.ratio').forEach(b=>b.classList.toggle('active', b.dataset.ratio==='free'));
+    updateCropBoxStyle();
+  }
+
+  let dragMode = null, dragStart = null, overlayRectCache = null;
+  function fracFromEvent(e){
+    return {
+      x: clamp((e.clientX-overlayRectCache.left)/overlayRectCache.width,0,1),
+      y: clamp((e.clientY-overlayRectCache.top)/overlayRectCache.height,0,1)
+    };
+  }
+  function startDrag(mode, e){
+    dragMode = mode;
+    overlayRectCache = cropOverlay.getBoundingClientRect();
+    dragStart = { frac:fracFromEvent(e), rect:{...state.crop.rect} };
+    e.target.setPointerCapture(e.pointerId);
+  }
+  function onDragMove(e){
+    if(!dragMode) return;
+    const f = fracFromEvent(e);
+    const dx = f.x-dragStart.frac.x, dy = f.y-dragStart.frac.y;
+    const R = dragStart.rect;
+    const MIN = 0.06;
+    const imgAspect = baseCanvas.width/baseCanvas.height;
+    if(dragMode==='move'){
+      const nx = clamp(R.x+dx, 0, 1-R.w), ny = clamp(R.y+dy, 0, 1-R.h);
+      state.crop.rect = {x:nx,y:ny,w:R.w,h:R.h};
+    } else if(dragMode==='br'){
+      let nw = clamp(R.w+dx, MIN, 1-R.x), nh;
+      if(state.crop.aspect){
+        nh = nw*imgAspect/state.crop.aspect;
+        if(R.y+nh > 1){ nh = 1-R.y; nw = nh*state.crop.aspect/imgAspect; }
+      } else {
+        nh = clamp(R.h+dy, MIN, 1-R.y);
+      }
+      state.crop.rect = {x:R.x,y:R.y,w:nw,h:nh};
+    } else if(dragMode==='tl'){
+      const brX=R.x+R.w, brY=R.y+R.h;
+      const nx = clamp(R.x+dx, 0, brX-MIN), ny = clamp(R.y+dy, 0, brY-MIN);
+      state.crop.rect = {x:nx,y:ny,w:brX-nx,h:brY-ny};
+    }
+    updateCropBoxStyle();
+  }
+  function onDragEnd(){ dragMode = null; }
+
+  function rotate90(dir){
+    const bw=baseCanvas.width, bh=baseCanvas.height;
+    const nc=document.createElement('canvas');
+    nc.width=bh; nc.height=bw;
+    const nctx=nc.getContext('2d');
+    if(dir===1){ nctx.translate(bh,0); nctx.rotate(Math.PI/2); }
+    else { nctx.translate(0,bw); nctx.rotate(-Math.PI/2); }
+    nctx.drawImage(baseCanvas,0,0);
+    setBase(nc);
+  }
+  function applyStraighten(angleDeg){
+    if(!angleDeg) return;
+    const rad = angleDeg*Math.PI/180;
+    const bw=baseCanvas.width, bh=baseCanvas.height;
+    const boundW = Math.abs(bw*Math.cos(rad))+Math.abs(bh*Math.sin(rad));
+    const boundH = Math.abs(bw*Math.sin(rad))+Math.abs(bh*Math.cos(rad));
+    const rot=document.createElement('canvas');
+    rot.width=Math.round(boundW); rot.height=Math.round(boundH);
+    const rctx=rot.getContext('2d');
+    rctx.translate(boundW/2, boundH/2);
+    rctx.rotate(rad);
+    rctx.drawImage(baseCanvas, -bw/2, -bh/2);
+    const inscribed = rotatedRectMaxArea(bw, bh, rad);
+    const cw=Math.max(1,Math.round(inscribed.w)), ch=Math.max(1,Math.round(inscribed.h));
+    const cxp=boundW/2, cyp=boundH/2;
+    const final=document.createElement('canvas');
+    final.width=cw; final.height=ch;
+    final.getContext('2d').drawImage(rot, cxp-cw/2, cyp-ch/2, cw, ch, 0,0,cw,ch);
+    setBase(final);
+  }
+  function applyCrop(){
+    const r = state.crop.rect;
+    const bw=baseCanvas.width, bh=baseCanvas.height;
+    const sx=Math.round(r.x*bw), sy=Math.round(r.y*bh);
+    const sw=Math.max(1,Math.round(r.w*bw)), sh=Math.max(1,Math.round(r.h*bh));
+    const nc=document.createElement('canvas');
+    nc.width=sw; nc.height=sh;
+    nc.getContext('2d').drawImage(baseCanvas, sx,sy,sw,sh, 0,0,sw,sh);
+    setBase(nc);
+  }
+
+  function initCropUI(){
+    document.getElementById('handleTL').addEventListener('pointerdown', e=>{
+      if(state.crop.aspect) return;
+      e.stopPropagation(); startDrag('tl', e);
+    });
+    document.getElementById('handleBR').addEventListener('pointerdown', e=>{
+      e.stopPropagation(); startDrag('br', e);
+    });
+    cropBox.addEventListener('pointerdown', e=>{
+      if(e.target.classList.contains('crop-handle')) return;
+      startDrag('move', e);
+    });
+    window.addEventListener('pointermove', onDragMove);
+    window.addEventListener('pointerup', onDragEnd);
+    window.addEventListener('pointercancel', onDragEnd);
+
+    document.querySelectorAll('.ratio').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        document.querySelectorAll('.ratio').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        const val = btn.dataset.ratio;
+        state.crop.aspect = val==='free' ? null : parseFloat(val);
+        if(state.crop.aspect && baseCanvas.width){
+          const imgAspect = baseCanvas.width/baseCanvas.height;
+          let w,h;
+          if(state.crop.aspect >= imgAspect){ w=1; h=imgAspect/state.crop.aspect; }
+          else { h=1; w=state.crop.aspect/imgAspect; }
+          w*=0.94; h*=0.94;
+          state.crop.rect = {x:(1-w)/2, y:(1-h)/2, w, h};
+        }
+        updateCropBoxStyle();
+      });
+    });
+
+    document.getElementById('resetCropBtn').addEventListener('click', resetCropState);
+    document.getElementById('applyCropBtn').addEventListener('click', applyCrop);
+
+    document.getElementById('rot-ccw').addEventListener('click', ()=>rotate90(-1));
+    document.getElementById('rot-cw').addEventListener('click', ()=>rotate90(1));
+
+    const straightenInput = document.getElementById('s-straighten');
+    straightenInput.addEventListener('input', e=>{
+      const v = parseFloat(e.target.value);
+      document.getElementById('v-straighten').textContent = v+'°';
+      document.getElementById('applyStraightenBtn').disabled = (v===0);
+      canvas.style.transform = v ? `rotate(${v}deg)` : '';
+    });
+    document.getElementById('applyStraightenBtn').addEventListener('click', ()=>{
+      applyStraighten(parseFloat(straightenInput.value));
+      straightenInput.value=0;
+      document.getElementById('v-straighten').textContent='0°';
+      document.getElementById('applyStraightenBtn').disabled=true;
+      canvas.style.transform='';
+    });
+
+    window.addEventListener('resize', ()=>{
+      if(cropOverlay.classList.contains('show')) syncCropOverlayGeometry();
+    });
+  }
+
+  /* ================= LUT UI ================= */
+
+  function showLutStatus(msg, isError){
+    const el = document.getElementById('lutStatus');
+    el.textContent = msg;
+    el.className = 'hint' + (isError ? ' error' : '');
+    clearTimeout(showLutStatus._t);
+    showLutStatus._t = setTimeout(()=>{
+      el.textContent = 'Standard 33-point 3D LUTs (.cube format). Processed entirely on your device.';
+      el.className = 'hint';
+    }, 4000);
+  }
+  function toggleLutIntensityRow(){
+    document.getElementById('lutIntensityRow').style.display = state.lut.active ? 'flex' : 'none';
+  }
+  function renderLutList(){
+    const list = document.getElementById('lutList');
+    list.innerHTML = '';
+    const none = document.createElement('div');
+    none.className = 'lut-chip' + (!state.lut.active ? ' active':'');
+    none.textContent = 'None';
+    none.addEventListener('click', ()=>{ state.lut.active=null; renderLutList(); toggleLutIntensityRow(); scheduleRender(); });
+    list.appendChild(none);
+    state.lut.loaded.forEach((L,idx)=>{
+      const chip = document.createElement('div');
+      chip.className = 'lut-chip' + (state.lut.active===L ? ' active':'');
+      chip.innerHTML = `<span>${L.name}</span><button class="chip-x" type="button">×</button>`;
+      chip.addEventListener('click', e=>{
+        if(e.target.classList.contains('chip-x')) return;
+        state.lut.active = L; renderLutList(); toggleLutIntensityRow(); scheduleRender();
+      });
+      chip.querySelector('.chip-x').addEventListener('click', e=>{
+        e.stopPropagation();
+        state.lut.loaded.splice(idx,1);
+        if(state.lut.active===L) state.lut.active=null;
+        renderLutList(); toggleLutIntensityRow(); scheduleRender();
+      });
+      list.appendChild(chip);
+    });
+  }
+  function initLutUI(){
+    document.getElementById('lutUploadBtn').addEventListener('click', ()=>document.getElementById('lutFile').click());
+    document.getElementById('lutFile').addEventListener('change', e=>{
+      const file = e.target.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = ()=>{
+        try{
+          const parsed = parseCubeLUT(reader.result);
+          const entry = { name:file.name.replace(/\.cube$/i,''), size:parsed.size, data:parsed.data };
+          state.lut.loaded.push(entry);
+          state.lut.active = entry;
+          renderLutList(); toggleLutIntensityRow(); scheduleRender();
+          showLutStatus('Loaded "'+entry.name+'" ('+entry.size+'³)', false);
+        }catch(err){
+          showLutStatus(err.message, true);
+        }
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    });
+    document.getElementById('s-lutIntensity').addEventListener('input', e=>{
+      state.lut.intensity = parseFloat(e.target.value);
+      document.getElementById('v-lutIntensity').textContent = state.lut.intensity+'%';
+      scheduleRender();
+    });
+  }
+
+  /* ================= base image + rendering ================= */
+
+  function setBase(sourceCanvas){
+    baseCanvas.width = sourceCanvas.width;
+    baseCanvas.height = sourceCanvas.height;
+    baseCtx.clearRect(0,0,baseCanvas.width,baseCanvas.height);
+    baseCtx.drawImage(sourceCanvas,0,0);
+    resetCropState();
+    regeneratePreview();
+  }
+  function drawScaledInto(source, targetCanvas, maxDim){
+    const sw = source.naturalWidth || source.width;
+    const sh = source.naturalHeight || source.height;
+    const scale = Math.min(1, maxDim/Math.max(sw,sh));
+    targetCanvas.width = Math.round(sw*scale);
+    targetCanvas.height = Math.round(sh*scale);
+    const c = targetCanvas.getContext('2d');
+    c.drawImage(source,0,0,targetCanvas.width,targetCanvas.height);
+    return c;
+  }
+  function regeneratePreview(){
+    const pctx = drawScaledInto(baseCanvas, canvas, MAX_PREVIEW_DIM);
+    previewSourceData = pctx.getImageData(0,0,canvas.width,canvas.height);
+    dimsLabel.textContent = baseCanvas.width+'×'+baseCanvas.height;
+    renderPreview();
+  }
+
+  let rafPending = false;
+  function scheduleRender(){
+    if(rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(()=>{ renderPreview(); rafPending=false; });
+  }
+  function renderPreview(){
+    if(!previewSourceData) return;
+    const working = new ImageData(new Uint8ClampedArray(previewSourceData.data), previewSourceData.width, previewSourceData.height);
+    applyAdjustments(working, state.adj);
+    ctx.putImageData(working,0,0);
+  }
+
+  function loadFile(file){
+    if(!file || !file.type.startsWith('image/')) return;
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = ()=>{
+      drawScaledInto(img, baseCanvas, MAX_EXPORT_DIM);
+      URL.revokeObjectURL(url);
+
+      dropzone.style.display='none';
+      canvas.classList.remove('hidden');
+      compareBtn.classList.add('show');
+      resetBtn.disabled=false;
+      downloadBtn.disabled=false;
+
+      state.adj = {...DEFAULT_ADJ};
+      syncSlidersFromState();
+      resetCurves();
+      state.lut.active = null;
+      renderLutList(); toggleLutIntensityRow();
+      document.querySelectorAll('.preset-card').forEach(c=>c.classList.toggle('active', c.dataset.key==='original'));
+
+      resetCropState();
+      regeneratePreview();
+    };
+    img.src = url;
+  }
+
+  dropzone.addEventListener('click', ()=>fileInput.click());
+  fileInput.addEventListener('change', e=>loadFile(e.target.files[0]));
+  ['dragover'].forEach(ev=>dropzone.addEventListener(ev, e=>{ e.preventDefault(); dropzone.classList.add('drag'); }));
+  ['dragleave','drop'].forEach(ev=>dropzone.addEventListener(ev, e=>{ e.preventDefault(); dropzone.classList.remove('drag'); }));
+  dropzone.addEventListener('drop', e=>{ if(e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
+
+  function showOriginal(){ if(previewSourceData) ctx.putImageData(previewSourceData,0,0); }
+  compareBtn.addEventListener('pointerdown', showOriginal);
+  compareBtn.addEventListener('pointerup', renderPreview);
+  compareBtn.addEventListener('pointerleave', renderPreview);
+
+  resetBtn.addEventListener('click', ()=>{
+    state.adj = {...DEFAULT_ADJ};
+    syncSlidersFromState();
+    document.querySelectorAll('.preset-card').forEach(c=>c.classList.toggle('active', c.dataset.key==='original'));
+    renderPreview();
+  });
+
+  downloadBtn.addEventListener('click', ()=>{
+    if(!baseCanvas.width) return;
+    downloadBtn.textContent = 'Exporting…';
+    setTimeout(()=>{
+      const ec = document.createElement('canvas');
+      ec.width = baseCanvas.width; ec.height = baseCanvas.height;
+      const ectx = ec.getContext('2d');
+      ectx.drawImage(baseCanvas,0,0);
+      const data = ectx.getImageData(0,0,ec.width,ec.height);
+      applyAdjustments(data, state.adj);
+      ectx.putImageData(data,0,0);
+      ec.toBlob(blob=>{
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href=url; a.download='safelight-edit.jpg';
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+        downloadBtn.textContent = 'Export JPG';
+      }, 'image/jpeg', 0.92);
+    }, 30);
+  });
+
+  /* ================= init ================= */
+
+  buildSliders();
+  buildPresets();
+  buildTabs();
+  syncSlidersFromState();
+  initCurvesUI();
+  initCropUI();
+  initLutUI();
+  rebuildCurveLUTs();
+  drawCurveEditor();
+  renderLutList();
+
+})();
+</script>
+</body>
+</html>
+<!--
+  NEXT STEPS TO GO FULL PWA (optional, still free):
+
+  1. Add manifest.json next to this file:
+     {
+       "name": "Safelight",
+       "short_name": "Safelight",
+       "start_url": ".",
+       "display": "standalone",
+       "background_color": "#14120F",
+       "theme_color": "#14120F",
+       "icons": [{ "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }]
+     }
+     and link it: <link rel="manifest" href="manifest.json">
+
+  2. Add a one-line service worker (sw.js) that caches this file, so it
+     opens even with no signal:
+       self.addEventListener('fetch', e => {});
+     Register it near the top of the script:
+       if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+
+  3. Want a real installable .apk for the Play Store later? Wrap this same
+     code with Capacitor (capacitorjs.com) — it's free and open-source;
+     the only cost is Google's one-time $25 developer registration fee.
+-->
